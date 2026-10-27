@@ -1,0 +1,14 @@
+[Unit]
+Description=llama.cpp embedding server (nomic-embed-text) for HealthChat
+After=network-online.target nvidia-persistenced.service
+Wants=network-online.target
+
+[Service]
+User=root
+ExecStart=/opt/llama/run_embed.sh
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
