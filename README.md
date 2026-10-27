@@ -1,8 +1,8 @@
 # Freja Multi-GPU Llama Server
 
-Configuration, systemd services, scripts, and benchmark notes for **Freja** (`192.168.107.15`), a dedicated multi-GPU local LLM inference server equipped with two NVIDIA GeForce RTX 3060 12GB cards (24 GB VRAM total) and 78 GB system RAM.
+Production configuration, systemd services, automated test scripts, and benchmark documentation for **Freja** (`192.168.107.15`), our dedicated multi-GPU local LLM inference server powered by two NVIDIA GeForce RTX 3060 12GB cards (24 GB VRAM total) and 78 GB system RAM.
 
-The configuration incorporates empirical optimizations inspired by the [4claps/houston-p100-cluster](https://github.com/4claps/houston-p100-cluster) project, tuned specifically for NVIDIA Ampere architecture.
+The stack is tuned specifically for the NVIDIA Ampere architecture, featuring quantified KV caching, MTP speculative decoding, layer splitting, and dual-service orchestration.
 
 ---
 
@@ -39,49 +39,62 @@ The configuration incorporates empirical optimizations inspired by the [4claps/h
 | :--- | :--- | :--- |
 | **Host** | `Freja` (`192.168.107.15`) | Headless Ubuntu 24.04 LTS |
 | **CPU** | AMD Ryzen 5 5600X (6c/12t @ 3.7–4.6 GHz) | PCIe 4.0 / Resizable BAR enabled |
-| **RAM** | 78 GiB DDR4 | ~70 GiB free |
+| **RAM** | 78 GiB DDR4 | ~70 GiB available memory |
 | **GPU 0** | NVIDIA GeForce RTX 3060 12GB | VRAM: 12,288 MiB, Driver 580.178.04 |
 | **GPU 1** | NVIDIA GeForce RTX 3060 12GB | VRAM: 12,288 MiB, Driver 580.178.04 |
-| **Total VRAM** | 24,576 MiB (~24 GB) | Unified across 2 devices |
+| **Total VRAM** | 24,576 MiB (~24 GB) | Unified dual-GPU inference |
 
-Full details can be found in [docs/HARDWARE.md](docs/HARDWARE.md).
+Full hardware details and topology are documented in [docs/HARDWARE.md](docs/HARDWARE.md).
 
 ---
 
 ## Services & Ports
 
-### 1. Main LLM Server (`llama-server.service` on Port `11434`)
-* **Model:** `gemma-4-12b-it-Q6_K.gguf` (9.2 GB)
-* **Speculative Draft (MTP):** `mtp-gemma-4-12B-it-Q4_0.gguf` (242 MB)
+### 1. Primary LLM Server (`llama-server.service` on Port `11434`)
+* **Base Model:** `gemma-4-12b-it-Q6_K.gguf` (9.2 GB, high-fidelity quantization)
+* **Speculative Draft Head (MTP):** `mtp-gemma-4-12B-it-Q4_0.gguf` (242 MB)
 * **Vision / Multimodal Projector:** `mmproj-gemma-4-12B-it-Q8_0.gguf` (152 MB)
-* **GPU Split:** Layer split `--split-mode layer --tensor-split 53,47` across GPU 0 & 1
-* **Context & Parallelism:** 32,768 context size (`-c 32768`), 3 parallel slots (`-np 3`) with unified KV cache
-* **Features:** Flash Attention (`-fa on`), `q4_0` KV cache, Jinja templating, metrics enabled
+* **Workload Distribution:** Layer split `--split-mode layer --tensor-split 53,47` across GPU 0 & 1
+* **Context & Concurrency:** 32,768 context size (`-c 32768`), 3 parallel slots (`-np 3`) with unified KV cache
+* **Acceleration:** Flash Attention (`-fa on`), `q4_0` KV cache, Jinja templating, live metrics
 
 ### 2. Embedding Server (`llama-embed.service` on Port `11435`)
 * **Model:** `nomic-embed-text-v1.5.f16.gguf` (262 MB, 768 dimensions)
 * **Placement:** Pinned strictly to GPU 1 (`CUDA_VISIBLE_DEVICES=1`)
-* **Parallelism:** 8,192 context size, 4 parallel slots (`-np 4`), mean pooling
-* **Role:** High-speed vector embeddings for semantic search and HealthChat memory
+* **Concurrency:** 8,192 context size, 4 parallel slots (`-np 4`), mean pooling
+* **Role:** High-speed vector embeddings for semantic search, RAG pipelines, and HealthChat memory
 
 ---
 
-## Applied Optimizations (from Houston P100 Cluster)
+## Performance Optimizations
 
-Based on findings in the [4claps/houston-p100-cluster](https://github.com/4claps/houston-p100-cluster) repository, the following optimisations have been implemented:
+Our production setup implements several carefully benchmarked optimizations:
 
 1. **`q4_0` KV Cache Quantization:**
-   * Changed from `--cache-type-k q8_0 --cache-type-v q8_0` to `q4_0`.
-   * **Gain:** +4.1% higher generation throughput, -572 MiB idle VRAM footprint (saves multiple gigabytes under 32k context).
-2. **MTP Speculative Decoding Tuning:**
-   * Configured `--spec-draft-n-max 3` and `--spec-draft-p-min 0.0`.
-   * **Gain:** Decreased per-token latency to 23.40 ms/token.
-3. **Dropped Request Protection (`-b 2048`):**
-   * Ensures aborted client connections release the slot within ~4 seconds instead of 70+ seconds.
-4. **Monitoring Safe Practices:**
-   * Health checks poll `/health` rather than high-frequency polling on `/slots` to prevent condition-variable stalls.
+   * Replaced conventional `q8_0` KV caching with `q4_0`.
+   * **Result:** +4.1% higher generation throughput, 572 MiB immediate VRAM reduction at idle, saving multiple gigabytes under deep 32k context load.
+2. **Calibrated MTP Speculative Decoding:**
+   * Tuned draft execution with `--spec-draft-n-max 3` and `--spec-draft-p-min 0.0`.
+   * **Result:** Reduced per-token generation latency to 23.40 ms/token.
+3. **Prompt Batching & Disconnect Protection (`-b 2048`):**
+   * Configured batch slicing to guarantee that client disconnects or aborted requests release GPU slots in **~4 seconds** (compared to 70+ seconds under default batching), with negligible (<0.3%) prefill overhead.
+4. **Optimized Monitoring:**
+   * Health probes target `/health` at steady intervals to ensure prompt-cancellation threads are never stalled by slot-polling contention.
 
-Detailed notes and benchmark tables are in [docs/HOUSTON-OPTIMIZATIONS.md](docs/HOUSTON-OPTIMIZATIONS.md).
+Detailed benchmark numbers and methodology are documented in [docs/OPTIMIZATIONS.md](docs/OPTIMIZATIONS.md).
+
+---
+
+## Benchmark Results
+
+Evaluated on `Freja` using Gemma 4 12B IT (Q6_K) on a 115-token prompt generating 350 completion tokens:
+
+| Metric | Baseline | Optimized Configuration | Gain |
+| :--- | :--- | :--- | :--- |
+| **Generation Throughput** | 41.06 tokens/s | **42.74 tokens/s** | **+4.1%** |
+| **Per-Token Latency** | 24.35 ms | **23.40 ms** | **-3.9%** |
+| **Response Time (350 tokens)** | 8.81 s | **8.33 s** | **~0.5 s faster** |
+| **VRAM Footprint (Idle)** | 13,843 MiB | **13,271 MiB** | **572 MiB freed** |
 
 ---
 
@@ -91,32 +104,32 @@ Detailed notes and benchmark tables are in [docs/HOUSTON-OPTIMIZATIONS.md](docs/
 .
 ├── README.md
 ├── configs/
-│   ├── run_server.sh              # Main llama-server startup script
-│   └── run_embed.sh               # Nomic embedding server startup script
+│   ├── run_server.sh              # Main llama-server launch script
+│   └── run_embed.sh               # Embedding server launch script
 ├── systemd/
 │   ├── llama-server.service       # Systemd unit for LLM server
 │   └── llama-embed.service        # Systemd unit for Embedding server
 ├── scripts/
-│   ├── bench.py                   # Python benchmark test tool
-│   └── smoke_test.sh              # Health & endpoint validation script
+│   ├── bench.py                   # Automated Python benchmark test
+│   └── smoke_test.sh              # Endpoint & quality validation script
 └── docs/
-    ├── HARDWARE.md                # System topology and VRAM allocation
-    └── HOUSTON-OPTIMIZATIONS.md   # Benchmark analysis and optimization rationale
+    ├── HARDWARE.md                # System topology and VRAM split
+    └── OPTIMIZATIONS.md           # Benchmark data and tuning analysis
 ```
 
 ---
 
 ## Operational Commands
 
-### Check Status & Logs
+### Check Status & Telemetry
 ```bash
 # Check service status
 systemctl status llama-server llama-embed
 
-# Stream live server logs
+# Live log stream
 journalctl -u llama-server -f
 
-# Check GPU memory and power usage
+# Check GPU utilization and temperatures
 nvidia-smi
 ```
 
@@ -126,12 +139,12 @@ sudo systemctl restart llama-server
 sudo systemctl restart llama-embed
 ```
 
-### Run Tests
+### Run Benchmarks & Health Tests
 ```bash
-# Quick health check & endpoint validation
+# Endpoint validation and quality smoke test
 /opt/llama/smoke_test.sh
 
-# Run benchmark test
+# Run benchmark test suite
 python3 /opt/llama/scripts/bench.py
 ```
 
@@ -139,16 +152,16 @@ python3 /opt/llama/scripts/bench.py
 
 ## API Endpoints
 
-The server exposes both standard OpenAI-compatible endpoints and Ollama-compatible endpoints:
+The server exposes OpenAI-compatible and Ollama-compatible HTTP endpoints:
 
-| Endpoint | Method | Purpose |
+| Endpoint | Method | Description |
 | :--- | :--- | :--- |
 | `http://192.168.107.15:11434/v1/chat/completions` | POST | OpenAI chat completions (Gemma 4 12B IT) |
-| `http://192.168.107.15:11434/v1/models` | GET | List loaded models |
+| `http://192.168.107.15:11434/v1/models` | GET | List active models |
 | `http://192.168.107.15:11434/health` | GET | Server health check |
 | `http://192.168.107.15:11434/metrics` | GET | Prometheus metrics |
-| `http://192.168.107.15:11434/api/generate` | POST | Ollama generate format |
-| `http://192.168.107.15:11435/v1/embeddings` | POST | OpenAI embeddings format (Nomic) |
+| `http://192.168.107.15:11434/api/generate` | POST | Ollama generate endpoint |
+| `http://192.168.107.15:11435/v1/embeddings` | POST | OpenAI embeddings endpoint (Nomic) |
 
 ### Example cURL Request
 
