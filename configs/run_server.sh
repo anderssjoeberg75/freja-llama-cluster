@@ -2,6 +2,9 @@
 set -euo pipefail
 
 MODEL_DIR=/opt/llama/models/gemma-4-12b-it
+# Enumerate GPUs in PCI bus order so CUDA indices match nvidia-smi (default is
+# "fastest first", which is ambiguous with two identical cards).
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export CUDA_VISIBLE_DEVICES=0,1
 
 exec /opt/llama/build/bin/llama-server \

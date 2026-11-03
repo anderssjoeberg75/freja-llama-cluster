@@ -1,7 +1,7 @@
 [Unit]
 Description=llama.cpp embedding server (nomic-embed-text) for HealthChat
 After=network-online.target nvidia-persistenced.service
-Wants=network-online.target
+Wants=network-online.target nvidia-persistenced.service
 
 [Service]
 User=root

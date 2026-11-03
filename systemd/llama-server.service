@@ -1,11 +1,10 @@
 [Unit]
 Description=llama.cpp server with cuBLAS (CUDA) multi‑GPU
-After=network-online.target
+After=network-online.target nvidia-persistenced.service
 Wants=network-online.target nvidia-persistenced.service
 
 [Service]
 User=root
-Environment=CUDA_VISIBLE_DEVICES=0,1
 ExecStart=/opt/llama/run_server.sh
 Restart=always
 RestartSec=5
