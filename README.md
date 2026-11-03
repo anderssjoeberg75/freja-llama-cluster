@@ -110,7 +110,9 @@ Evaluated on `Freja` using Gemma 4 12B IT (Q6_K) on a 115-token prompt generatin
 │   ├── llama-server.service       # Systemd unit for LLM server
 │   └── llama-embed.service        # Systemd unit for Embedding server
 ├── scripts/
-│   ├── bench.py                   # Automated Python benchmark test
+│   ├── bench.py                   # Benchmark: TTFT, prefill/decode t/s, MTP acceptance, concurrency
+│   ├── llama_bench_sweep.sh       # Offline sweep: split mode, ubatch, tensor-split
+│   ├── gpu_check.sh               # PCIe link, clocks, power limit, throttle reasons
 │   └── smoke_test.sh              # Endpoint & quality validation script
 └── docs/
     ├── HARDWARE.md                # System topology and VRAM split
@@ -144,9 +146,16 @@ sudo systemctl restart llama-embed
 # Endpoint validation and quality smoke test
 /opt/llama/smoke_test.sh
 
-# Run benchmark test suite
+# Run benchmark test suite (median of 5 runs after warm-up)
 python3 /opt/llama/scripts/bench.py
+python3 /opt/llama/scripts/bench.py --concurrency 3
+
+# GPU link / clock / throttle check
+/opt/llama/scripts/gpu_check.sh
 ```
+
+Next tuning candidates (row split, ubatch, quantization, prompt cache) are listed in
+[docs/OPTIMIZATIONS.md § 4](docs/OPTIMIZATIONS.md#4-further-optimization-roadmap-not-yet-benchmarked).
 
 ---
 

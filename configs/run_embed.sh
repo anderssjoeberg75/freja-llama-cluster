@@ -3,6 +3,8 @@
 # 768 dims) for HealthChat's coach memory. Small (~300 MB VRAM), pinned to GPU 1.
 set -euo pipefail
 
+# PCI bus order, so "1" is the same card as nvidia-smi's GPU 1 (and run_server.sh).
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export CUDA_VISIBLE_DEVICES=1
 
 exec /opt/llama/build/bin/llama-server \
